@@ -34,6 +34,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install "flet>=0.81" flet-cli flet-desktop
 
+      - name: Pin jni_flutter (fix build)
+        shell: pwsh
+        run: |
+          @'
+
+          [tool.flet.flutter.pubspec.dependency_overrides]
+          jni_flutter = "1.0.3"
+          '@ | Add-Content -Path pyproject.toml -Encoding utf8
+          Get-Content pyproject.toml -Tail 5
+
       - name: Build Windows Executable
         shell: pwsh
         run: |
