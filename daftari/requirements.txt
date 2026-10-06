@@ -1,0 +1,14 @@
+# ═══════════ دفتري — المكتبات (مصدر الحقيقة: pyproject.toml؛ هذا الملف نسخة مطابقة لأي أداة تقرأ requirements.txt) ═══════════
+# ⚠ لا تضف هنا أي مكتبة C بلا نسخة أندرويد: opencv / numpy / pytesseract / sounddevice / easyocr  (فحص tools/check_mobile_deps.py يمنع ذلك)
+flet>=0.81                    # واجهة المستخدم (ويندوز + أندرويد + iOS + ويب)
+flet-audio-recorder           # تسجيل الصوت: المسار الموحّد على كل المنصات (يُرسَل التسجيل إلى Gemini/OpenAI/Groq للنسخ)
+Pillow>=10.0                  # ضغط الصور، رسم الفواتير والـ PDF، الصور في Excel
+openpyxl>=3.1                 # تصدير/استيراد Excel (بايثون خالص)
+arabic-reshaper>=3.0          # تشكيل الحروف العربية في الفواتير المطبوعة (بايثون خالص)
+python-bidi==0.4.2            # ⚠ ثبّت 0.4.2: الإصدارات ≥0.5 مكتوبة بـ Rust ولا تُبنى على أندرويد
+# كل ما عدا ذلك يعمل بمكتبة بايثون القياسية (urllib/asyncio/json…): الاتصال بـ Gemini/OpenAI/Anthropic/Groq وSupabase وFileMaker
+# وبحث الويب وقراءة الصفحات — بلا requests/httpx، فلا تعارض إصدارات ولا وزن إضافي في الـ APK.
+
+# ── اختياري للمطوّر فقط (لا يدخل البناء) ──
+# sounddevice>=0.4            # احتياطي أخير لتسجيل ويندوز إن تعطّل مكوّن Flet
+# playwright>=1.40            # بحث في كتالوجات تعتمد JavaScript على ويندوز:  playwright install chromium

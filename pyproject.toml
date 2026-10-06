@@ -1,0 +1,56 @@
+[project]
+name = "daftari"
+version = "1.0.0"
+description = "دفتري — برنامج محاسبة وفواتير ومخزون"
+requires-python = ">=3.10"
+# ⚠ هذه القائمة تُثبَّت داخل الـ APK/IPA/EXE. لا تضع هنا أي مكتبة C بلا نسخة أندرويد:
+#   opencv / pytesseract / sounddevice / easyocr / numpy-heavy → سبب فشل البناء أو تعطّل التطبيق على الجوال.
+# تحليل الصور (فواتير / باركود / قطع غيار) صار عبر نموذج «مساعد شركة العمر» (Gemini) بدل OpenCV وTesseract.
+dependencies = [
+  "flet>=0.81",
+  "flet-audio-recorder",          # زر الفويس (ويندوز + أندرويد + iOS)
+  "Pillow>=10.0",                 # ضغط الصور ورسم المستندات (نسخة أندرويد جاهزة عند Flet)
+  "openpyxl>=3.1",                # تصدير/استيراد Excel (بايثون خالص)
+  "arabic-reshaper>=3.0",         # تشكيل الحروف العربية في الفواتير المطبوعة (بايثون خالص)
+  "python-bidi==0.4.2",           # ⚠ الإصدارات ≥0.5 مكتوبة بـ Rust ولا تُبنى على أندرويد — ثبّتنا الخالصة
+]
+
+[project.optional-dependencies]
+# اختياري لسطح مكتب المطوّر فقط (لا يدخل في البناء): pip install ".[desktop]"
+desktop = ["sounddevice>=0.4"]
+# مسار OCR المحلي القديم (احتياطي مهجور، غير مستخدم): pip install ".[legacy-ocr]"
+legacy-ocr = ["opencv-python-headless>=4.8", "pytesseract>=0.3.10", "numpy>=1.24"]
+
+[tool.flet]
+org = "com.alomar"
+product = "Daftari"
+company = "Al-Omar"
+copyright = "Al-Omar"
+permissions = ["microphone"]
+
+[tool.flet.app]
+path = "."
+module = "main"
+
+[tool.flet.splash]
+color = "#FFFFFF"
+dark_color = "#FFFFFF"
+
+[tool.flet.compile]
+app = false          # لا نُصرّف الكود إلى .pyc أثناء البناء: يبقى main.py قابلاً للقراءة والتشخيص
+packages = false
+cleanup = true
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.ACCESS_NETWORK_STATE" = true
+"android.permission.RECORD_AUDIO" = true
+"android.permission.MODIFY_AUDIO_SETTINGS" = true
+"android.permission.READ_EXTERNAL_STORAGE" = true          # اختيار صور الفواتير والأصناف (أندرويد ≤ 12)
+"android.permission.WRITE_EXTERNAL_STORAGE" = true         # حفظ PDF/Excel/الصور (أندرويد ≤ 9؛ بعدها يُستعمل مربع الحفظ)
+"android.permission.READ_MEDIA_IMAGES" = true              # صلاحية الصور في أندرويد 13+
+
+[tool.flet.ios.info]
+NSMicrophoneUsageDescription = "لتسجيل أسئلتك الصوتية لمساعد شركة العمر"
+NSCameraUsageDescription = "لتصوير الفواتير والأصناف وتحليلها بالذكاء الاصطناعي"
+NSPhotoLibraryUsageDescription = "لاختيار صور الفواتير والأصناف"
