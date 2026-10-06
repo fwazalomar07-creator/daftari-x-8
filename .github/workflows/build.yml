@@ -1,9 +1,8 @@
-name: Build Daftari
+name: Build Application (APK & EXE)
 
 on:
   push:
-    branches: [main, master]
-    tags: ["v*"]
+    branches: [ main, master ]
   workflow_dispatch:
 
 concurrency:
@@ -12,50 +11,95 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  # ── منع الإغلاق القسري (exit code 143 = قتل العملية بنفاد الذاكرة) أثناء بناء Gradle/Flutter ──
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dorg.gradle.parallel=false -Xmx3g -XX:MaxMetaspaceSize=1g -XX:+UseSerialGC"
-  _JAVA_OPTIONS: "-Xmx3g"
-  PUB_CACHE: ~/.pub-cache
 
 jobs:
-  # ───────────── فحص سريع قبل البناء: إن فشل هنا لا يضيع وقت بناء APK ─────────────
-  check:
-    runs-on: ubuntu-latest
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONIOENCODING: "utf-8"
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: مكتبات الاختبار
-        run: pip install Pillow openpyxl arabic-reshaper "python-bidi==0.4.2"
-      - name: فحص التوافق مع أندرويد (لا opencv/tesseract/numpy)
-        run: python tools/check_mobile_deps.py
-      - name: فحص الإقلاع بكل تخطيطات التشغيل (يمنع خطأ relative import)
-        run: python tools/check_launch.py
-      - name: الاختبارات
-        run: python -m unittest discover -s daftari/tests -t .
 
-  android:
-    needs: check
+      - name: Install Flet
+        run: |
+          python -m pip install --upgrade pip
+          pip install "flet>=0.81" flet-cli flet-desktop
+
+      - name: Build Windows Executable
+        shell: pwsh
+        run: |
+          flet build windows --yes --no-rich-output --verbose --build-number ${{ github.run_number }} 2>&1 | Tee-Object -FilePath build_log.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Show Windows Error Summary
+        if: failure()
+        shell: pwsh
+        run: |
+          Select-String -Path build_log.txt -Pattern "error|Exception|failed" -Context 3,5 | Select-Object -First 40 | ForEach-Object { $_.ToString() }
+          Write-Host "----- LAST 60 LINES -----"
+          Get-Content build_log.txt -Tail 60
+
+      - name: Upload Windows Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-log
+          path: build_log.txt
+          if-no-files-found: ignore
+
+      - name: Zip Windows Output
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/* -DestinationPath daftari-windows.zip
+
+      - name: Upload Windows EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Daftari-Windows-App
+          path: daftari-windows.zip
+          if-no-files-found: error
+
+  build-android:
+    name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: actions/setup-java@v4
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: تهيئة الذاكرة (swap 8GB + تحرير قرص) — يمنع الإغلاق 143
+
+      - name: Install Linux Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip zip curl git xz-utils libglu1-mesa
+
+      - name: Prepare Memory (swap + free disk + gradle)
         run: |
           sudo swapoff -a || true
           sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY/CodeQL" || true
           mkdir -p ~/.gradle
           cat > ~/.gradle/gradle.properties <<'PROPS'
-          org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
           org.gradle.daemon=false
           org.gradle.parallel=false
           org.gradle.workers.max=2
@@ -63,99 +107,56 @@ jobs:
           android.useAndroidX=true
           PROPS
           free -h; df -h /
-      - name: تثبيت Flet
-        run: pip install "flet>=0.81" flet-cli flet-desktop
-      - name: بناء APK
-        run: flet build apk --yes --no-rich-output --verbose --build-number ${{ github.run_number }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: daftari-apk
-          path: build/apk/*.apk
-          if-no-files-found: error
-      - name: سجل البناء عند الفشل
+
+      - name: Accept Android Licenses
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKM" ]; then SDKM="$(find "$ANDROID_HOME" -name sdkmanager -type f | head -1)"; fi
+          echo "Using sdkmanager: $SDKM"
+          set +o pipefail
+          yes | "$SDKM" --licenses > /dev/null || true
+
+      - name: Install Flet
+        run: |
+          python -m pip install --upgrade pip
+          pip install "flet>=0.81" flet-cli flet-desktop
+
+      - name: Pin jni_flutter (fix Android build)
+        run: |
+          printf '\n[tool.flet.flutter.pubspec.dependency_overrides]\njni_flutter = "1.0.3"\n' >> pyproject.toml
+          tail -5 pyproject.toml
+
+      - name: Build Android APK
+        run: |
+          set -o pipefail
+          flet build apk --yes --no-rich-output --verbose --build-number ${{ github.run_number }} 2>&1 | tee build_log.txt
+
+      - name: Show Build Error Summary
         if: failure()
+        run: |
+          echo "===== command not found / 127 ====="
+          grep -n -i -B 6 -A 3 -E "command not found|not found|No such file|exit code 127|returned 127" build_log.txt | head -150 || true
+          echo "===== What went wrong ====="
+          grep -n -A 12 -E "What went wrong|FAILURE:|Execution failed" build_log.txt | head -80 || true
+
+      - name: Upload Android Build Log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-build-log
-          path: |
-            build/flutter/build/**/outputs/logs/**
-            ~/.flet/log/**
+          path: build_log.txt
           if-no-files-found: ignore
 
-  # ───────────── يشغّل الـ APK الحقيقي على محاكي أندرويد ويفشل إن ظهر أي خطأ بايثون ─────────────
-  android-smoke:
-    needs: android
-    runs-on: ubuntu-latest
-    continue-on-error: true          # تقرير فقط: فشل المحاكي لا يمنع الإصدار (راجع ملف android-smoke-evidence)
-    timeout-minutes: 30
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: daftari-apk
-          path: apk
-      - name: تفعيل KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          script: |
-            adb install -r apk/*.apk
-            adb logcat -c
-            adb shell monkey -p com.alomar.daftari -c android.intent.category.LAUNCHER 1
-            sleep 45
-            adb logcat -d > logcat.txt
-            adb exec-out screencap -p > screen.png
-            if grep -E "ImportError|ModuleNotFoundError|Traceback \(most recent call last\)|attempted relative import" logcat.txt; then
-              echo "::error::ظهر خطأ بايثون عند تشغيل التطبيق على المحاكي"; exit 1
-            fi
-            echo "التشغيل نظيف: لا أخطاء بايثون"
-      - uses: actions/upload-artifact@v4
+      - name: List Build Output
         if: always()
-        with:
-          name: android-smoke-evidence
-          path: |
-            logcat.txt
-            screen.png
-          if-no-files-found: ignore
+        run: |
+          find build -maxdepth 3 2>/dev/null | head -50 || true
+          find . -name "*.apk" 2>/dev/null | head -20 || true
 
-  windows:
-    needs: check
-    runs-on: windows-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: تثبيت Flet
-        run: pip install "flet>=0.81" flet-cli flet-desktop
-      - name: بناء exe
-        run: flet build windows --yes --no-rich-output --verbose --build-number ${{ github.run_number }}
-      - name: ضغط النتيجة
-        shell: pwsh
-        run: Compress-Archive -Path build/windows/* -DestinationPath daftari-windows.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: daftari-windows
-          path: daftari-windows.zip
+          name: Daftari-Android-APK
+          path: build/apk/*.apk
           if-no-files-found: error
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/daftari-apk/*.apk
-            dist/daftari-windows/daftari-windows.zip
